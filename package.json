@@ -7,6 +7,9 @@
     "directory": "dist",
     "access": "public"
   },
+  "bin": {
+    "openapi-gen": "dist/bin.js"
+  },
   "scripts": {
     "version": "changeset version",
     "release": "pnpm run build && changeset publish",
@@ -14,7 +17,8 @@
     "clean": "rm -rf dist/*",
     "build": "tsup && pnpm copy-package-json",
     "build:ts": "tsup",
-    "copy-package-json": "tsx scripts/copy-package-json.ts"
+    "copy-package-json": "tsx scripts/copy-package-json.ts",
+    "prepare": "pnpm run build"
   },
   "repository": {
     "type": "git",
