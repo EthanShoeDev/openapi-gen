@@ -13,6 +13,7 @@ const make = Effect.gen(function* () {
   const classes = new Set<string>()
   const enums = new Set<string>()
   const refStore = new Map<string, JsonSchema.JsonSchema>()
+  const selfReferencingClasses = new Set<string>()
 
   function cleanupSchema(schema: JsonSchema.JsonSchema) {
     if (
@@ -73,10 +74,16 @@ const make = Effect.gen(function* () {
       schema: JsonSchema.JsonSchema,
       childName: string | undefined,
       asStruct = true,
+      rootTypeName?: string,
     ) {
       schema = cleanupSchema(schema)
       const enumSuffix = childName?.endsWith("Enum") ? "" : "Enum"
       if ("$ref" in schema) {
+        // Detect self-reference
+        const refName = identifier(schema.$ref.split("/").pop()!)
+        if (rootTypeName && refName === rootTypeName) {
+          selfReferencingClasses.add(rootTypeName)
+        }
         if (seenRefs.has(schema.$ref)) {
           return
         }
@@ -217,7 +224,10 @@ const make = Effect.gen(function* () {
     currentIdentifier: string,
     topLevel = false,
     isRoot = false,
+    rootIdentifier?: string,
   ): Option.Option<string> => {
+    // Track the root class being defined for self-reference detection
+    const effectiveRootIdentifier = rootIdentifier ?? currentIdentifier
     schema = cleanupSchema(schema)
     if ("properties" in schema) {
       const obj = schema as JsonSchema.Object
@@ -233,6 +243,9 @@ const make = Effect.gen(function* () {
             importName,
             enumNullable ? filteredSchema : schema,
             currentIdentifier + identifier(key),
+            false,
+            false,
+            effectiveRootIdentifier,
           ).pipe(
             Option.map((source) =>
               transformer.onProperty({
@@ -292,7 +305,9 @@ const make = Effect.gen(function* () {
         return Option.none()
       }
       const name = identifier(schema.$ref.split("/").pop()!)
-      return Option.some(transformer.onRef({ importName, name }))
+      // Detect self-reference (recursive type) and wrap in S.suspend
+      const isSelfRef = name === effectiveRootIdentifier
+      return Option.some(transformer.onRef({ importName, name, isSelfRef }))
     } else if ("properties" in schema) {
       return toSource(
         importName,
@@ -300,6 +315,7 @@ const make = Effect.gen(function* () {
         currentIdentifier,
         topLevel,
         isRoot,
+        effectiveRootIdentifier,
       )
     } else if ("allOf" in schema) {
       if (!isRoot && !topLevel && store.has(currentIdentifier)) {
@@ -318,6 +334,7 @@ const make = Effect.gen(function* () {
         currentIdentifier + "Enum",
         topLevel,
         isRoot,
+        effectiveRootIdentifier,
       )
     } else if ("anyOf" in schema || "oneOf" in schema) {
       let itemSchemas =
@@ -343,7 +360,7 @@ const make = Effect.gen(function* () {
       const items = pipe(
         itemSchemas,
         Arr.filterMap((_) =>
-          toSource(importName, _, currentIdentifier + "Enum").pipe(
+          toSource(importName, _, currentIdentifier + "Enum", false, false, effectiveRootIdentifier).pipe(
             Option.map(
               (source) =>
                 ({
@@ -405,6 +422,9 @@ const make = Effect.gen(function* () {
             importName,
             itemsSchema(schema.items),
             currentIdentifier,
+            false,
+            false,
+            effectiveRootIdentifier,
           ).pipe(
             Option.map((item) =>
               transformer.onArray({
@@ -490,6 +510,7 @@ export class JsonSchemaTransformer extends Context.Tag("JsonSchemaTransformer")<
     onRef(options: {
       readonly importName: string
       readonly name: string
+      readonly isSelfRef?: boolean
     }): string
 
     onObject(options: {
@@ -584,6 +605,11 @@ export const layerTransformerSchema = Layer.sync(JsonSchemaTransformer, () => {
     onTopLevel({ importName, schema, name, source, isClass, description }) {
       const isObject = "properties" in schema
       if (!isObject || !isClass) {
+        // Handle empty class schemas - use S.Class with empty object instead of invalid extends
+        const trimmedSource = source.trim()
+        if (isClass && (trimmedSource === '{\n  \n}' || trimmedSource === '{}' || trimmedSource === '{\n}')) {
+          return `${toComment(description)}export class ${name} extends ${importName}.Class<${name}>("${name}")({}) {}`
+        }
         return `${toComment(description)}export class ${name} extends ${source} {}`
       }
       return `${toComment(description)}export class ${name} extends ${importName}.Class<${name}>("${name}")(${source}) {}`
@@ -596,8 +622,9 @@ export const layerTransformerSchema = Layer.sync(JsonSchemaTransformer, () => {
       )(options.source)
       return `${toComment(options.description)}"${options.key}": ${source}`
     },
-    onRef({ name }) {
-      return name
+    onRef({ importName, name, isSelfRef }) {
+      // Wrap self-references in S.suspend with Schema.AnyNoContext return type to handle recursive types
+      return isSelfRef ? `${importName}.suspend((): ${importName}.Schema.AnyNoContext => ${name})` : name
     },
     onObject({ importName, properties, topLevel }) {
       return `${topLevel ? "" : `${importName}.Struct(`}{\n  ${properties}\n}${topLevel ? "" : ")"}`
@@ -692,6 +719,7 @@ export type ${name} = (typeof ${name})[keyof typeof ${name}];`
       return `${toComment(options.description)}readonly "${options.key}"${options.isOptional ? "?" : ""}: ${options.source}${options.isNullable ? " | null" : ""}${options.isOptional ? " | undefined" : ""}`
     },
     onRef({ name }) {
+      // TypeScript handles recursive types natively, no S.suspend needed
       return name
     },
     onObject({ properties }) {
