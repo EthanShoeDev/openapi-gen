@@ -581,7 +581,7 @@ export const layerTransformerSchema = Layer.sync(JsonSchemaTransformer, () => {
       }
       const defaultSource =
         options.default !== undefined && options.default !== null
-          ? `() => ${JSON.stringify(options.default)} as const`
+          ? `() => (${JSON.stringify(options.default)} as const)`
           : undefined
       if (options.isOptional) {
         return defaultSource
