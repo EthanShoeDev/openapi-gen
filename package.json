@@ -8,7 +8,7 @@
     "access": "public"
   },
   "bin": {
-    "openapi-gen": "src/bin.ts"
+    "openapi-gen": "dist/bin.js"
   },
   "scripts": {
     "version": "changeset version",
@@ -17,8 +17,7 @@
     "clean": "rm -rf dist/*",
     "build": "tsup && pnpm copy-package-json",
     "build:ts": "tsup",
-    "copy-package-json": "tsx scripts/copy-package-json.ts",
-    "prepare": "pnpm run build"
+    "copy-package-json": "tsx scripts/copy-package-json.ts"
   },
   "repository": {
     "type": "git",
