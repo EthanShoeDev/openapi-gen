@@ -8,7 +8,7 @@
     "access": "public"
   },
   "bin": {
-    "openapi-gen": "dist/bin.js"
+    "openapi-gen": "src/bin.ts"
   },
   "scripts": {
     "version": "changeset version",
